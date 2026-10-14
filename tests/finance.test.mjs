@@ -1,0 +1,13 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {examples,metrics,score,parseCSV,serializeCSV,filterStocks,warnings} from '../lib/finance.mjs';
+test('연간 지표는 금액 단위에 영향 없이 계산된다',()=>{const s=examples[0],m=metrics(s);assert.equal(m.per,10);assert.equal(m.pbr,1.2);assert.equal(m.roe,120/950*100);assert.equal(m.fcf,130);assert.ok(Math.abs(m.growth-20)<1e-10);});
+test('적자와 음수 자기자본에서 의미 없는 PER·ROE를 만들지 않는다',()=>{const s={...examples[0],netIncome:-10,equity:-1};assert.equal(metrics(s).per,null);assert.equal(metrics(s).roe,null);assert.equal(score(s),null);assert.ok(warnings(s).includes('자본총계 비양수'));});
+test('0·음수 전기 매출은 성장률이 없고 성장 조건에서 제외된다',()=>{const s={...examples[0],previousRevenue:0};assert.equal(metrics(s).growth,null);assert.equal(filterStocks([s],{market:'전체',sector:'전체',period:'전체',growth:0}).length,0);});
+test('결측값은 0으로 변환하지 않는다',()=>{const s={...examples[0],operatingCashFlow:null};const result=parseCSV(serializeCSV([s]));assert.equal(result[0].operatingCashFlow,null);assert.equal(metrics(result[0]).fcf,null);assert.equal(score(result[0]),null);});
+test('따옴표·쉼표·한글·개행을 보존하는 CSV 왕복',()=>{const s={...examples[0],source:'공시, "확인"\n연간 자료'};assert.deepEqual(parseCSV(serializeCSV([s]))[0],s);});
+test('분기 자료·중복 종목·잘못된 숫자·음수 CAPEX를 거부한다',()=>{for(const changed of [{period:'2025-Q1'},{code:'123'},{capex:-1},{asOf:'2026-02-30'}])assert.throws(()=>parseCSV(serializeCSV([{...examples[0],...changed}])));assert.throws(()=>parseCSV(serializeCSV([examples[0],examples[0]])));assert.throws(()=>parseCSV(serializeCSV([{...examples[0],revenue:'abc'}])));});
+test('수익성과 현금 조건을 모두 적용한다',()=>{const f={market:'전체',sector:'전체',period:'전체',roe:10,per:20,growth:5,debt:150,cash:true};const result=filterStocks(examples,f);assert.ok(result.length>0);assert.ok(!result.some(x=>x.code===examples[5].code));assert.equal(filterStocks([{...examples[0],liabilities:2000}],f).length,0);});
+test('누락된 순이익은 ROE 0%로 둔갑하지 않는다',()=>{assert.equal(metrics({...examples[0],netIncome:null}).roe,null);});
+test('발굴 점수는 0~100이며 부족한 값에서 표시하지 않는다',()=>{for(const s of examples){const r=score(s);if(r)assert.ok(r.total>=0&&r.total<=100);}assert.equal(score({...examples[0],previousEquity:null}),null);assert.equal(score({...examples[0],marketCap:0}),null);});
+test('엑셀 수식 문자열은 내보낼 때 실행되지 않도록 처리한다',()=>{const csv=serializeCSV([{...examples[0],name:'=HYPERLINK("bad")'}]);assert.ok(csv.includes("'=HYPERLINK"));});
